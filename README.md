@@ -1,8 +1,10 @@
 # Darija AI Tutor
 
-Real-time speech-to-text tutor for **Moroccan Darija** (and English) powered by OpenAI Whisper and a lightweight PySide6 UI.
+Real-time tutor for **Moroccan Darija** powered by OpenAI Whisper and a lightweight PySide6 UI.
 
-📝 **Blog:** *Building a Conversational AI for an Underrepresented Language — How I Designed an AI Tutor to Learn and Practice Moroccan Darija.*  
+📝 **Blog:** *Building a Conversational AI for an Underrepresented Language 
+— How I Designed an AI Tutor to Learn and Practice Moroccan Darija.*  
+
 Why this exists, the design choices, and what I learned.
 👉 Read it here: <https://medium.com/@bisbis.kamil>
 
