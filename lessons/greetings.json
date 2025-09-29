@@ -1,0 +1,48 @@
+{
+	"unit": "greetings",
+	"turns": [
+		{
+			"prompt_text": "Jawb b tahia. Say a greeting like Salam 3likom or Salam.",
+			"prompt_darija": "Salam. Qul tahia b-darija, bhal Salam 3likom.",
+			"hint_darija": "Qul: Salam 3likom. Tqdar tgul Salam ghir bsif.",
+			"intents": ["greet"],
+			"targets": [
+				"salam 3likom",
+				"salam 3likum",
+				"salam",
+				"salamo 3alikom",
+				"as-salam 3likom",
+				"assalam 3likom",
+				"slm 3likom",
+				"سلام",
+				"سلام عليكم"
+			],
+			"tips": [
+				"Mzyan. Zid: Wa 3likom salam.",
+				"Bravo. Khalih sarih: Salam 3likom."
+			]
+		},
+		{
+			"prompt_text": "Kidayr. Answer how you are. For example Labas or Bikher or Hamdullah.",
+			"prompt_darija": "Kidayr? Jawb b-kelma sghira: Labas, bikher, wla hamdullah.",
+			"hint_darija": "Qul: Ana bikher, hamdullah.",
+			"intents": ["how_are_you"],
+			"targets": [
+				"labas",
+				"bikher",
+				"bikhir",
+				"hamdullah",
+				"ana labas",
+				"ana bikher",
+				"bikhir hamdullah",
+				"لاباس",
+				"بخير",
+				"الحمد الله"
+			],
+			"tips": [
+				"Zwin. Zid kelmat t-tadabbor: shukran.",
+				"Mzyan. Goul jumla kamla: Ana bikher, hamdullah."
+			]
+		}
+	]
+}

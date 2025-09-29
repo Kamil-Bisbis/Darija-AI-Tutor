@@ -1,0 +1,48 @@
+# OS
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+dist/
+build/
+.eggs/
+.mypy_cache/
+.pytest_cache/
+.cache/
+*.log
+*.tmp
+*.bak
+
+# Virtual envs
+.venv/
+venv/
+env/
+
+# Editors/IDE
+.vscode/
+.idea/
+
+# Audio & data artifacts
+data/
+voices/
+*.wav
+*.mp3
+*.flac
+
+# Model artifacts (never commit model weights)
+*.safetensors
+*.bin
+*.onnx
+models/
+hf_cache/
+huggingface/
+transformers_cache/
+
+# Misc
+*.swp
+*.swo
