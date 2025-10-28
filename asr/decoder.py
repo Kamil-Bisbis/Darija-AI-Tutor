@@ -4,155 +4,101 @@ import numpy as np
 import torch
 import torch.nn.functional as F
 
-# Tunables
-WINDOW_SECS = 8.0            # context window for decoding
-EMIT_EVERY_SECS = 0.5        # UI update cadence (~2 Hz)
-FINALIZE_SILENCE_SECS = 0.8  # silence needed to "lock" a sentence
-STABLE_MIN_SECS = 0.5        # text must remain unchanged for this long (after silence)
-MIN_EMIT_CHARS_NOTALK = 3    # don't emit tiny deltas while silent
-PUNCT_FINAL = (".", "?", "!", "…", "،", "؛")
-
-def _is_multilingual(model):
-    return bool(getattr(model.config, "is_multilingual", False))
-
-def run_decode(window, fs, processor, model, inbuf, emit_text, finalize_segment, device):
+def run_decode(window, fs, processor, model, inbuf, emit_text, emit_finalize, device,
+               emit_progress=None, forced_lang: str = "auto"):
     """
-    Pull audio from `inbuf`, run Whisper, and emit incremental text.
-    Also: lock lines on stable silence, suppress single-word junk during pauses,
-    and provide attention masks to avoid warnings.
+    Collect audio while held, then run ONE Whisper decode on release.
+    Supports forced_lang in {"en","ar","auto"} to bias multilingual checkpoints.
     """
     model.eval()
-    # branch generation settings by checkpoint type
-    is_multilingual = bool(getattr(model.config, "is_multilingual", False))
-    gen_kwargs = dict(
-        do_sample=False,
-        temperature=0.0,
-        num_beams=1,
-        return_timestamps=False,
-        max_new_tokens=96,
-    )
+    model_dtype = next(model.parameters()).dtype
 
-    if is_multilingual:
-        # darija: seed via language/task flags
-        gen_kwargs.update(
-            language=getattr(window, "lang_hint", None) or "ar",
-            task=getattr(window, "task_mode", None) or "transcribe",
-        )
-    else:
-        # english: clear baked prompt to avoid the deprecation note
-        if getattr(model.generation_config, "forced_decoder_ids", None) is not None:
-            model.generation_config.forced_decoder_ids = None
+    target_sr = 16000
+    accum = []
+    sr_in = getattr(window, "mic_sr", fs)
 
-    # encoder features and mask from the rolling buffer
-    feats = processor.feature_extractor(buf, sampling_rate=16000, return_tensors="pt").input_features.to(device)
-    enc_mask = torch.ones((feats.shape[0], feats.shape[-1]), dtype=torch.long, device=feats.device)
-
-    # decode
-    ids = model.generate(input_features=feats, attention_mask=enc_mask, **gen_kwargs)
-    text = processor.batch_decode(ids, skip_special_tokens=True)[0].strip()
-
-    def _resample_mono(x: np.ndarray, sr_in: int, sr_out: int) -> np.ndarray:
-        if sr_in == sr_out:
-            return x
-        t = torch.from_numpy(x).to(torch.float32)[None, None, :]
-        y = F.interpolate(t, size=int(len(x) * sr_out / sr_in), mode="linear", align_corners=False)
-        return y[0, 0].cpu().numpy()
-
-    mic_sr = int(getattr(window, "mic_sr", fs))
-
+    # while holding, drain the queue and store audio
     while getattr(window, "recording", False):
-        # Collect a block (non-blocking)
         try:
-            in_block = inbuf.get(timeout=0.05)
+            block = inbuf.get(timeout=0.05)
         except Exception:
-            in_block = None
-        if in_block is None:
             continue
 
-        x = in_block.astype(np.float32).squeeze()
+        x = block.astype(np.float32).squeeze()
         if x.ndim != 1:
             x = x[:, 0]
 
-        # Simple RMS VAD on this block
-        block_rms = float(np.sqrt(np.mean(x * x) + 1e-12))
-        now = time.time()
-        if block_rms > vad_gate:
-            last_speech_t = now
-
-        # Resample to 16 kHz
-        x16 = _resample_mono(x, mic_sr, target_sr)
-
-        # Slide into ring buffer
-        n = min(len(x16), len(buf))
-        if n > 0:
-            buf = np.roll(buf, -n)
-            buf[-n:] = x16[:n]
-
-        # Throttle decoding rate
-        if now - last_emit < EMIT_EVERY_SECS:
-            continue
-        last_emit = now
-
-        with torch.no_grad():
-            # extract log-mel spectrogram features from the 8s rolling buffer
-            feats = processor.feature_extractor(buf, sampling_rate=16000, return_tensors="pt").input_features.to(device)
-
-            # create an encoder attention mask (all ones since we never pad streaming audio)
-            enc_mask = torch.ones((feats.shape[0], feats.shape[-1]), dtype=torch.long, device=feats.device)
-
-            # run whisper’s decoder with deterministic settings for stable output
-            ids = model.generate(
-                input_features=feats,
-                attention_mask=enc_mask,
-                do_sample=False,
-                temperature=0.0,
-                num_beams=1
-            )
-
-            # decode token ids back into text
-            text = processor.batch_decode(ids, skip_special_tokens=True)[0].strip()
-
-        # Track stability
-        if text != prev_text:
-            prev_text = text
-            last_change_t = now
-
-        # Decide whether to emit this update
-        speaking = (now - last_speech_t) < 0.25  # small hangover; treat as "speaking" shortly after voice
-        delta_len = max(0, len(text) - len(last_emitted))
-
-        should_emit = False
-        if speaking:
-            # While speaking we keep UI updated
-            should_emit = True
+        if sr_in != target_sr:
+            t = torch.from_numpy(x)[None, None, :].to(torch.float32)
+            t = F.interpolate(t, size=int(len(x) * target_sr / max(1, sr_in)),
+                              mode="linear", align_corners=False)
+            x16 = t[0, 0].cpu().numpy()
         else:
-            # While silent, suppress tiny jitter (random "I/you/so")
-            if delta_len >= MIN_EMIT_CHARS_NOTALK or (text and last_emitted == ""):
-                should_emit = True
+            x16 = x
+        accum.append(x16.copy())
 
-        if should_emit and text:
-            last_emitted = text
-            emit_text(text)
+    if emit_progress:
+        try: emit_progress(10)
+        except Exception: pass
 
-        # Finalize (“lock in”) when:
-        #  - we’ve been silent long enough, and
-        #  - text hasn’t changed recently, or ends with terminal punctuation
-        silence_for = now - last_speech_t
-        unchanged_for = now - last_change_t
-        ends_with_punct = any(text.endswith(p) for p in PUNCT_FINAL)
+    if not accum:
+        emit_finalize(time.time())
+        return
 
-        if text and (
-            (silence_for >= FINALIZE_SILENCE_SECS and unchanged_for >= STABLE_MIN_SECS)
-            or (ends_with_punct and silence_for >= 0.3)
-        ):
-            # Push the final text one more time (in case a small ending changed),
-            # then lock the segment and reset state for the next one.
-            if text != last_emitted:
-                emit_text(text)
-            finalize_segment(now)
-            prev_text = ""
-            last_emitted = ""
-            last_change_t = now  # reset stability window
+    audio16 = np.concatenate(accum)
 
-    # Recording stopped; finalize any residual
-    finalize_segment(time.time())
+    # features
+    feats = processor(
+        audio16, sampling_rate=target_sr, return_tensors="pt"
+    ).input_features.to(device=device, dtype=model_dtype)
+
+    if emit_progress:
+        try: emit_progress(35)
+        except Exception: pass
+
+    # generation args
+    gen_kwargs = {
+        "max_new_tokens": 128,
+        "do_sample": False,
+        "return_dict_in_generate": False
+    }
+
+    # If multilingual whisper (small/medium), we can supply language+task prompt IDs
+    forced_lang = (forced_lang or "auto").lower()
+    try:
+        is_multilingual = getattr(model, "is_multilingual", True)  # small/medium are multilingual
+    except Exception:
+        is_multilingual = True
+
+    task = "transcribe"
+    forced_ids = None
+    if is_multilingual and forced_lang in ("en", "ar"):
+        try:
+            forced_ids = processor.get_decoder_prompt_ids(language=forced_lang, task=task)
+        except Exception:
+            forced_ids = None
+
+    # make sure English checkpoints are not forcing English
+    try:
+        if getattr(model.generation_config, "forced_decoder_ids", None) is not None:
+            model.generation_config.forced_decoder_ids = None
+    except Exception:
+        pass
+
+    with torch.no_grad():
+        if forced_ids is not None:
+            ids = model.generate(input_features=feats, forced_decoder_ids=forced_ids, **gen_kwargs)
+        else:
+            ids = model.generate(input_features=feats, **gen_kwargs)
+
+    if emit_progress:
+        try: emit_progress(92)
+        except Exception: pass
+
+    text = processor.batch_decode(ids, skip_special_tokens=True)[0].strip()
+    emit_text(text)
+
+    if emit_progress:
+        try: emit_progress(100)
+        except Exception: pass
+    emit_finalize(time.time())
