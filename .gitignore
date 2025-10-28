@@ -46,3 +46,4 @@ transformers_cache/
 # Misc
 *.swp
 *.swo
+.env
