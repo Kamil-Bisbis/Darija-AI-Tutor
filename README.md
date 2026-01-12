@@ -2,11 +2,11 @@
 
 Real-time tutor for **Moroccan Darija** powered by OpenAI Whisper (ASR) and an LLM (OpenAI GPT) for interactive replies, all in a lightweight PySide6 UI.
 
-📝 **Blog:** *Building a Conversational AI for an Underrepresented Language 
+**Blog:** *Building a Conversational AI for an Underrepresented Language 
 — How I Designed an AI Tutor to Learn and Practice Moroccan Darija.*  
 
 Why this exists, the design choices, and what I learned.
-👉 Read it here: <https://medium.com/@bisbis.kamil>
+Read it here: <[https://medium.com/@bisbis.kamil](https://medium.com/@bisbis.kamil/building-a-conversational-ai-to-teach-an-underrepresented-language-8dd118d17562)>
 
 ---
 
@@ -65,4 +65,4 @@ python whisper_gui.py
 
 ---
 
-For more details, see the blog post or explore the code!
+For more details, see the blog post or explore the code.
